@@ -3,22 +3,38 @@
     <header class="header">
       <h1>数独求解器</h1>
       <p class="subtitle">在下方网格中填写已知数字，点击「求解」获取答案</p>
+      <div class="mode-switch">
+        <button
+          class="btn-mode"
+          :class="{ active: mode === '6x6' }"
+          @click="setMode('6x6')"
+        >
+          6×6
+        </button>
+        <button
+          class="btn-mode"
+          :class="{ active: mode === '9x9' }"
+          @click="setMode('9x9')"
+        >
+          9×9
+        </button>
+      </div>
     </header>
 
-    <div class="sudoku-container">
+    <div class="sudoku-container" :class="`size-${mode}`">
       <div class="sudoku-grid" :class="{ solved: isSolved }">
         <div
           v-for="(row, rowIndex) in grid"
           :key="rowIndex"
           class="sudoku-row"
-          :class="{ 'row-border': (rowIndex + 1) % 3 === 0 && rowIndex !== 8 }"
+          :class="getRowBorderClass(rowIndex)"
         >
           <div
             v-for="(cell, colIndex) in row"
             :key="colIndex"
             class="sudoku-cell"
             :class="{
-              'col-border': (colIndex + 1) % 3 === 0 && colIndex !== 8,
+              ...getColBorderClass(colIndex),
               'given': cell.isGiven,
               'error': cell.error,
             }"
@@ -54,12 +70,23 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, computed } from 'vue'
+
+const mode = ref('9x9')
+
+// 6×6: 宫为 2×3；9×9: 宫为 3×3
+const config = computed(() => ({
+  '6x6': { size: 6, maxDigit: 6, boxRows: 2, boxCols: 3 },
+  '9x9': { size: 9, maxDigit: 9, boxRows: 3, boxCols: 3 },
+}))
+
+const cfg = computed(() => config.value[mode.value])
 
 // 创建空数独网格
-function createEmptyGrid() {
-  return Array.from({ length: 9 }, () =>
-    Array.from({ length: 9 }, () => ({
+function createEmptyGrid(size) {
+  const n = size || cfg.value.size
+  return Array.from({ length: n }, () =>
+    Array.from({ length: n }, () => ({
       value: '',
       isGiven: false,
       error: false,
@@ -67,13 +94,35 @@ function createEmptyGrid() {
   )
 }
 
-const grid = ref(createEmptyGrid())
+const grid = ref(createEmptyGrid(9))
 const isSolved = ref(false)
 const solving = ref(false)
 const message = ref('')
 const messageType = ref('info')
 
-// 输入验证：只允许 1-9
+// 6×6: 宫边框在第 1,3,5 行后；9×9: 宫边框在第 2,5,8 行后
+function getRowBorderClass(rowIndex) {
+  const { size, boxRows } = cfg.value
+  const isBorder = (rowIndex + 1) % boxRows === 0 && rowIndex !== size - 1
+  return { 'row-border': isBorder }
+}
+
+// 6×6: 宫边框在第 2,5 列后；9×9: 宫边框在第 2,5,8 列后
+function getColBorderClass(colIndex) {
+  const { size, boxCols } = cfg.value
+  const isBorder = (colIndex + 1) % boxCols === 0 && colIndex !== size - 1
+  return { 'col-border': isBorder }
+}
+
+function setMode(m) {
+  if (mode.value === m) return
+  mode.value = m
+  grid.value = createEmptyGrid(cfg.value.size)
+  isSolved.value = false
+  message.value = ''
+}
+
+// 输入验证：6×6 允许 1-6，9×9 允许 1-9
 function onCellInput(event, row, col) {
   const input = event.target.value
   if (input === '') {
@@ -85,7 +134,8 @@ function onCellInput(event, row, col) {
     return
   }
   const num = parseInt(input, 10)
-  if (!isNaN(num) && num >= 1 && num <= 9) {
+  const maxDigit = cfg.value.maxDigit
+  if (!isNaN(num) && num >= 1 && num <= maxDigit) {
     grid.value[row][col].value = num
     grid.value[row][col].isGiven = true
     grid.value[row][col].error = false
@@ -99,18 +149,19 @@ function onCellInput(event, row, col) {
 
 // 键盘导航
 function onKeydown(event, row, col) {
+  const maxIdx = cfg.value.size - 1
   const key = event.key
   let target = null
   if (key === 'ArrowUp' && row > 0) {
     event.preventDefault()
     target = document.querySelector(`input[data-row="${row - 1}"][data-col="${col}"]`)
-  } else if (key === 'ArrowDown' && row < 8) {
+  } else if (key === 'ArrowDown' && row < maxIdx) {
     event.preventDefault()
     target = document.querySelector(`input[data-row="${row + 1}"][data-col="${col}"]`)
   } else if (key === 'ArrowLeft' && col > 0) {
     event.preventDefault()
     target = document.querySelector(`input[data-row="${row}"][data-col="${col - 1}"]`)
-  } else if (key === 'ArrowRight' && col < 8) {
+  } else if (key === 'ArrowRight' && col < maxIdx) {
     event.preventDefault()
     target = document.querySelector(`input[data-row="${row}"][data-col="${col + 1}"]`)
   } else if (key === 'Backspace' && !grid.value[row][col].value && col > 0) {
@@ -129,14 +180,15 @@ function gridToMatrix() {
 
 // 检查在 (row,col) 放置 num 是否有效
 function isValid(board, row, col, num) {
-  for (let i = 0; i < 9; i++) {
+  const { size, boxRows, boxCols } = cfg.value
+  for (let i = 0; i < size; i++) {
     if (i !== col && board[row][i] === num) return false
     if (i !== row && board[i][col] === num) return false
   }
-  const boxRow = Math.floor(row / 3) * 3
-  const boxCol = Math.floor(col / 3) * 3
-  for (let i = 0; i < 3; i++) {
-    for (let j = 0; j < 3; j++) {
+  const boxRow = Math.floor(row / boxRows) * boxRows
+  const boxCol = Math.floor(col / boxCols) * boxCols
+  for (let i = 0; i < boxRows; i++) {
+    for (let j = 0; j < boxCols; j++) {
       const r = boxRow + i
       const c = boxCol + j
       if ((r !== row || c !== col) && board[r][c] === num) return false
@@ -147,10 +199,11 @@ function isValid(board, row, col, num) {
 
 // 回溯法求解数独
 function solveSudoku(board) {
-  for (let row = 0; row < 9; row++) {
-    for (let col = 0; col < 9; col++) {
+  const { size, maxDigit } = cfg.value
+  for (let row = 0; row < size; row++) {
+    for (let col = 0; col < size; col++) {
       if (board[row][col] === 0) {
-        for (let num = 1; num <= 9; num++) {
+        for (let num = 1; num <= maxDigit; num++) {
           if (isValid(board, row, col, num)) {
             board[row][col] = num
             if (solveSudoku(board)) return true
@@ -170,10 +223,11 @@ function solve() {
   const givenCells = grid.value.map((row) =>
     row.map((cell) => cell.isGiven)
   )
+  const { size } = cfg.value
 
   // 验证当前输入是否合法
-  for (let r = 0; r < 9; r++) {
-    for (let c = 0; c < 9; c++) {
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
       grid.value[r][c].error = false
       if (board[r][c] !== 0 && !isValid(board, r, c, board[r][c])) {
         grid.value[r][c].error = true
@@ -193,8 +247,8 @@ function solve() {
     solving.value = false
 
     if (success) {
-      for (let r = 0; r < 9; r++) {
-        for (let c = 0; c < 9; c++) {
+      for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
           grid.value[r][c].value = board[r][c]
           grid.value[r][c].isGiven = givenCells[r][c]  // 原题数字保持高亮
         }
@@ -211,7 +265,7 @@ function solve() {
 
 // 清空
 function clear() {
-  grid.value = createEmptyGrid()
+  grid.value = createEmptyGrid(cfg.value.size)
   isSolved.value = false
   message.value = ''
 }
@@ -260,6 +314,35 @@ body {
   font-size: 0.95rem;
 }
 
+.mode-switch {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.btn-mode {
+  padding: 0.4rem 1rem;
+  font-size: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #a0a0a0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-mode:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.btn-mode.active {
+  background: rgba(233, 69, 96, 0.3);
+  border-color: rgba(233, 69, 96, 0.6);
+  color: #ff6b6b;
+}
+
 .sudoku-container {
   display: inline-block;
   padding: 1rem;
@@ -282,6 +365,11 @@ body {
   width: 44px;
   height: 44px;
   border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.sudoku-container.size-6x6 .sudoku-cell {
+  width: 48px;
+  height: 48px;
 }
 
 .sudoku-cell.col-border {
